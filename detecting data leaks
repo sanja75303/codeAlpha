@@ -1,0 +1,112 @@
+from flask import Flask, request, jsonify
+import sqlite3
+from Crypto.Cipher import AES
+from Crypto.Random import get_random_bytes
+import base64
+import hashlib
+import os
+
+app = Flask(__name__)
+DATABASE = 'secure_users.db'
+SECRET_KEY = 'my_secret_passphrase'  # Used for AES key derivation
+CAPABILITY_CODE = 'ACCESS1234'  # Example code for SQL access
+
+# Pad/unpad for AES block size
+BLOCK_SIZE = 16
+
+def pad(s): return s + (BLOCK_SIZE - len(s) % BLOCK_SIZE) * chr(BLOCK_SIZE - len(s) % BLOCK_SIZE)
+def unpad(s): return s[:-ord(s[len(s)-1:])]
+
+def derive_key(secret):
+    return hashlib.sha256(secret.encode()).digest()  # AES-256 key (32 bytes)
+
+def encrypt(data):
+    key = derive_key(SECRET_KEY)
+    iv = get_random_bytes(16)
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    encrypted = cipher.encrypt(pad(data).encode())
+    return base64.b64encode(iv + encrypted).decode()
+
+def decrypt(enc_data):
+    key = derive_key(SECRET_KEY)
+    enc = base64.b64decode(enc_data)
+    iv = enc[:16]
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    return unpad(cipher.decrypt(enc[16:]).decode())
+
+def init_db():
+    with sqlite3.connect(DATABASE) as conn:
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                encrypted_password TEXT NOT NULL
+            )
+        ''')
+        conn.commit()
+
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return jsonify({'error': 'Username and password are required'}), 400
+
+    enc_password = encrypt(password)
+
+    with sqlite3.connect(DATABASE) as conn:
+        c = conn.cursor()
+        # Prevent SQL injection with parameterized queries
+        c.execute('INSERT INTO users (username, encrypted_password) VALUES (?, ?)', (username, enc_password))
+        conn.commit()
+
+    return jsonify({'message': 'User registered successfully'}), 201
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+
+    with sqlite3.connect(DATABASE) as conn:
+        c = conn.cursor()
+        c.execute('SELECT encrypted_password FROM users WHERE username = ?', (username,))
+        result = c.fetchone()
+
+    if result:
+        dec_password = decrypt(result[0])
+        if dec_password == password:
+            return jsonify({'message': 'Login successful', 'auth_token': 'fake-jwt-token'}), 200
+
+    return jsonify({'error': 'Invalid credentials'}), 401
+
+@app.route('/secure-sql', methods=['POST'])
+def secure_sql():
+    data = request.get_json()
+    sql_query = data.get('query')
+    capability = data.get('capability_code')
+
+    # First layer: Capability code check
+    if capability != CAPABILITY_CODE:
+        return jsonify({'error': 'Unauthorized capability code'}), 403
+
+    # Very limited, controlled SQL execution for demonstration
+    if not sql_query.lower().startswith("select"):
+        return jsonify({'error': 'Only SELECT queries are allowed'}), 400
+
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            c = conn.cursor()
+            c.execute(sql_query)
+            result = c.fetchall()
+            return jsonify({'result': result}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    init_db()
+    app.run(debug=True)
+
