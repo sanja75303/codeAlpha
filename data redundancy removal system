@@ -1,0 +1,68 @@
+import hashlib
+import json
+
+class SimpleCloudDatabase:
+    def __init__(self):
+        # Simulated cloud DB using dictionary for fast lookup
+        self.data_store = {}
+    
+    def _generate_hash(self, data):
+        """
+        Generate a hash key for the data to identify duplicates.
+        Data is first serialized to JSON string to ensure consistency.
+        """
+        data_string = json.dumps(data, sort_keys=True)
+        return hashlib.sha256(data_string.encode()).hexdigest()
+    
+    def is_duplicate(self, data):
+        """
+        Check if the data already exists using the hash.
+        """
+        data_hash = self._generate_hash(data)
+        return data_hash in self.data_store
+    
+    def validate_data(self, data):
+        """
+        Basic validation logic - ensure data is a dictionary with at least one key-value pair.
+        Add more rules as needed.
+        """
+        return isinstance(data, dict) and bool(data)
+    
+    def add_data(self, data):
+        """
+        Validate and add data if it's not a duplicate.
+        """
+        if not self.validate_data(data):
+            return "Invalid data. Rejected."
+        
+        data_hash = self._generate_hash(data)
+        if self.is_duplicate(data):
+            return "Duplicate data. Rejected."
+        
+        self.data_store[data_hash] = data
+        return "Data added successfully."
+
+    def show_database(self):
+        """
+        Show all unique data in the simulated cloud DB.
+        """
+        return list(self.data_store.values())
+
+# Example usage
+if __name__ == "__main__":
+    cloud_db = SimpleCloudDatabase()
+
+    # Sample data
+    data1 = {"name": "Alice", "age": 30}
+    data2 = {"name": "Bob", "age": 25}
+    data3 = {"name": "Alice", "age": 30}  # Duplicate of data1
+
+    print(cloud_db.add_data(data1))  # Expected: Data added successfully.
+    print(cloud_db.add_data(data2))  # Expected: Data added successfully.
+    print(cloud_db.add_data(data3))  # Expected: Duplicate data. Rejected.
+    print(cloud_db.add_data({}))     # Expected: Invalid data. Rejected.
+
+    print("\nDatabase contents:")
+    for entry in cloud_db.show_database():
+        print(entry)
+
